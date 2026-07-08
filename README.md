@@ -1,13 +1,29 @@
 # Resume Analyzer & Advisor
 
-Two products sharing one backend:
+A full-stack AI platform with two products sharing one backend — a **Recruiter Dashboard** that shortlists candidates against a job's criteria using RAG, and a **Student Dashboard** that generates and critiques resumes using an LLM. Built with FastAPI, React, PostgreSQL, Pinecone, and the Gemini API.
 
-- **Recruiter dashboard** — define a role's shortlisting criteria, upload a
-  batch of resumes, and get a ranked shortlist where every accept/reject
-  decision comes with specific, evidence-based reasons.
-- **Student dashboard** — fill in your details and get a full resume drafted
-  from scratch, or upload an existing resume to get an ATS score, a mistake
-  list, and a rewritten improved version.
+---
+
+## Features
+
+### Recruiter Dashboard
+- Create a job posting with required skills, minimum experience, education requirement, and must-have keywords
+- Bulk upload resumes (PDF / DOCX / TXT) for a job in one request
+- Each resume is parsed to text, embedded, and indexed into a job-scoped vector namespace
+- Run a one-click **shortlist**: retrieves the most semantically relevant candidates via RAG, then asks the LLM for a structured, evidence-based verdict per candidate
+- View persisted results any time — match score, matched/missing skills, and human-readable reasons — without re-running the LLM
+- Results are automatically ranked by match score
+
+### Student Dashboard
+- **Generate mode** — fill in your details (education, experience, projects, skills) and get a full resume drafted from scratch
+- **Critique mode** — upload an existing resume and get:
+  - An ATS compatibility score
+  - A list of strengths
+  - A list of mistakes
+  - Actionable suggestions
+  - A rewritten, improved version of the resume
+
+---
 
 ## Architecture
 
@@ -17,104 +33,235 @@ React (Vite)  →  FastAPI  →  PostgreSQL   (jobs, candidates, results, struct
                           →  Gemini API    (embeddings + shortlist reasoning + resume generation/critique)
 ```
 
-The RAG loop for shortlisting works like this:
-1. Each uploaded resume is parsed to text, embedded with Gemini
-   (`text-embedding-004`), and upserted into Pinecone under a namespace
-   scoped to that job.
-2. Running "shortlist" embeds the job's criteria as a query, retrieves the
-   most semantically relevant candidates from that namespace, then asks
-   Gemini to give a structured, evidence-based verdict (score, matched/missing
-   skills, reasons) for each one.
-3. Results are stored in Postgres so they persist and can be re-fetched
-   without re-running the LLM.
+**The RAG shortlisting loop:**
+1. Every uploaded resume is parsed to plain text, embedded with Gemini (`gemini-embedding-001`, truncated to 768 dimensions via `output_dimensionality` to match the Pinecone index), and upserted into Pinecone under a namespace scoped to that job.
+2. Running "shortlist" embeds the job's criteria as a query, retrieves the most semantically relevant candidates from that namespace, then asks Gemini for a structured, evidence-based verdict (score, matched/missing skills, reasons) for each one.
+3. Results are stored in PostgreSQL so they persist and can be re-fetched instantly, without re-running the LLM.
 
-## A note on the Gemini model
+---
 
-The backend defaults to **`gemini-2.5-flash`**, which is on Google's free tier
-(with rate limits) as of mid-2026. Google deprecates and reprices Gemini
-models fairly often, so if you hit errors or want the latest cost-effective
-option, check https://ai.google.dev/gemini-api/docs/pricing and change
-`GEMINI_MODEL` in your `.env` — no code changes needed.
+## Tech Stack
 
-## Prerequisites
+| Category | Technology |
+|---|---|
+| Frontend | React (Vite), Tailwind CSS, Axios, React Router |
+| Backend | Python, FastAPI |
+| Database | PostgreSQL |
+| ORM | SQLAlchemy |
+| Vector Database | Pinecone (per-job namespaces for RAG) |
+| LLM / Embeddings | Google Gemini (`gemini-2.5-flash`, `gemini-embedding-001`) |
+| Resume Parsing | pdfplumber (PDF), python-docx (DOCX) |
+| Containerization | Docker Compose (PostgreSQL) |
 
+---
+
+## Getting Started
+
+### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- A Postgres instance (or use the included `docker-compose.yml`)
+- A PostgreSQL instance (or use the included `docker-compose.yml`)
 - A [Google AI Studio](https://aistudio.google.com/) API key (Gemini)
 - A [Pinecone](https://www.pinecone.io/) API key
 
-## 1. Start Postgres
-
+### 1. Start PostgreSQL
 ```bash
 docker compose up -d
 ```
 
-## 2. Backend
-
+### 2. Backend
 ```bash
 cd backend
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env   # then fill in GEMINI_API_KEY and PINECONE_API_KEY
+cp .env.example .env   # fill in GEMINI_API_KEY and PINECONE_API_KEY
 uvicorn app.main:app --reload --port 8000
 ```
+API runs at `http://localhost:8000` (interactive docs at `/docs`). Tables are created automatically on startup; the Pinecone index is created automatically on first use.
 
-The API is now at `http://localhost:8000` (interactive docs at `/docs`).
-Tables are created automatically on startup; the Pinecone index is created
-automatically on first use.
-
-## 3. Frontend
-
+### 3. Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
+Open `http://localhost:5173`. It talks to the backend at `http://localhost:8000` by default — override with a `VITE_API_URL` env var if needed.
 
-Open `http://localhost:5173`. It talks to the backend at
-`http://localhost:8000` by default — override with a `VITE_API_URL` env var
-if needed.
+### Environment Variables (`backend/.env`)
+```properties
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/resume_analyzer
 
-## Project layout
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 
-```
-backend/
-  app/
-    main.py            FastAPI app, CORS, router registration
-    config.py           env-driven settings
-    database.py          SQLAlchemy engine/session
-    models.py             Job, Candidate, ShortlistResult, GeneratedResume
-    schemas.py             Pydantic request/response models
-    routers/
-      recruiter.py          job CRUD, resume upload, shortlist, results
-      student.py             resume generation, resume critique
-    services/
-      resume_parser.py       PDF/DOCX/TXT text extraction
-      vector_service.py       Gemini embeddings + Pinecone upsert/query
-      llm_service.py           Gemini prompts for shortlisting & resume writing
+PINECONE_API_KEY=your_pinecone_api_key_here
+PINECONE_INDEX_NAME=resume-analyzer
+PINECONE_CLOUD=aws
+PINECONE_REGION=us-east-1
 
-frontend/
-  src/
-    pages/Home.jsx               role picker landing page
-    pages/RecruiterDashboard.jsx   job setup, upload, shortlist, results
-    pages/StudentDashboard.jsx      generate / critique tabs
-    components/MatchMeter.jsx        segmented match-score bar
-    components/ScoreRing.jsx          ATS score ring
-    api/client.js                     axios wrapper for every endpoint
+CORS_ORIGINS=http://localhost:5173
+UPLOAD_DIR=./uploads
 ```
 
-## What's deliberately simplified (next steps for production)
+> **Note on embeddings:** `gemini-embedding-001` outputs 3072-dimensional vectors by default. `vector_service.py` pins this down to 768 dimensions via the `output_dimensionality` parameter to match the Pinecone index (`_EMBED_DIM = 768`). If you change the embedding model, keep these two values in sync — a mismatch causes Pinecone upserts to fail with a `Vector dimension ... does not match the dimension of the index` error.
 
-- **Auth** — there's no login/user model yet. Add recruiter/student accounts
-  and scope jobs and generated resumes to a `user_id`.
-- **Migrations** — tables are created with `Base.metadata.create_all`; swap in
-  Alembic once the schema stabilizes.
-- **File storage** — uploaded resume bytes aren't persisted to disk/S3, only
-  the extracted text. Add blob storage if you need to re-download originals.
-- **Background jobs** — shortlisting runs synchronously in the request; for
-  large batches, move it to a task queue (Celery/RQ) and poll for status.
-- **Structured resume parsing** — `parsed_json` currently only captures a
-  name/email/phone guess via regex. You can extend `resume_parser.py` or ask
-  Gemini to also return structured fields (skills, years of experience,
-  degrees) at upload time so shortlisting doesn't rely purely on raw text.
+---
+
+## API Endpoints
+
+### Recruiter APIs
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/recruiter/jobs` | Create a new job with shortlisting criteria |
+| GET | `/recruiter/jobs` | List all jobs |
+| GET | `/recruiter/jobs/{job_id}` | Get a single job |
+| POST | `/recruiter/jobs/{job_id}/resumes` | Upload one or more resumes for a job |
+| POST | `/recruiter/jobs/{job_id}/shortlist` | Run the RAG shortlisting pipeline |
+| GET | `/recruiter/jobs/{job_id}/results` | Fetch persisted shortlist results |
+
+### Student APIs
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/student/resume/generate` | Generate a resume from structured form data |
+| POST | `/student/resume/critique` | Upload a resume and get an ATS score, mistakes, and an improved version |
+
+### Health
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/health` | Basic service health check |
+
+---
+
+## Request Examples
+
+### Create a Job (Recruiter)
+```
+POST /recruiter/jobs
+Content-Type: application/json
+
+{
+    "title": "Backend Engineer",
+    "description": "Looking for a backend engineer with API and cloud experience.",
+    "required_skills": ["python", "fastapi", "postgresql"],
+    "min_experience_years": 2,
+    "education_requirement": "Bachelor's in CS or related field",
+    "must_have_keywords": ["REST API"]
+}
+```
+
+### Upload Resumes (Recruiter)
+```
+POST /recruiter/jobs/{job_id}/resumes
+Content-Type: multipart/form-data
+
+files: resume1.pdf, resume2.docx
+```
+
+### Run Shortlist (Recruiter)
+```
+POST /recruiter/jobs/{job_id}/shortlist?top_k=50
+```
+
+Response:
+```json
+[
+    {
+        "id": "b1e2...",
+        "candidate_id": "a9f3...",
+        "candidate_name": "Jane Doe",
+        "candidate_email": "jane@example.com",
+        "shortlisted": true,
+        "match_score": 88.5,
+        "skills_matched": ["python", "fastapi"],
+        "skills_missing": ["postgresql"],
+        "reasons": "Strong backend experience with 2 relevant internships..."
+    }
+]
+```
+
+### Generate a Resume (Student)
+```
+POST /student/resume/generate
+Content-Type: application/json
+
+{
+    "full_name": "John Smith",
+    "email": "john@example.com",
+    "target_role": "Frontend Developer",
+    "education": [{"degree": "B.Tech CSE", "school": "XYZ University", "year": "2026"}],
+    "experience": [{"title": "Intern", "company": "ABC Corp", "duration": "6 months", "bullets": ["Built React components"]}],
+    "skills": ["React", "JavaScript", "Tailwind CSS"]
+}
+```
+
+### Critique a Resume (Student)
+```
+POST /student/resume/critique
+Content-Type: multipart/form-data
+
+file: my_resume.pdf
+target_role: Frontend Developer
+```
+
+---
+
+## Project Structure
+```
+resume-analyzer/
+│
+├── docker-compose.yml            # PostgreSQL container
+│
+├── backend/
+│   ├── requirements.txt
+│   ├── .env.example
+│   └── app/
+│       ├── main.py                 # FastAPI app, CORS, router registration
+│       ├── config.py                # env-driven settings
+│       ├── database.py               # SQLAlchemy engine/session
+│       ├── models.py                  # Job, Candidate, ShortlistResult, GeneratedResume
+│       ├── schemas.py                  # Pydantic request/response models
+│       ├── routers/
+│       │   ├── recruiter.py              # job CRUD, resume upload, shortlist, results
+│       │   └── student.py                 # resume generation, resume critique
+│       └── services/
+│           ├── resume_parser.py            # PDF/DOCX/TXT text extraction
+│           ├── vector_service.py            # Gemini embeddings + Pinecone upsert/query
+│           └── llm_service.py                # Gemini prompts for shortlisting & resume writing
+│
+└── frontend/
+    ├── package.json
+    ├── vite.config.js
+    ├── tailwind.config.js
+    └── src/
+        ├── main.jsx
+        ├── App.jsx
+        ├── api/
+        │   └── client.js                    # axios wrapper for every endpoint
+        ├── pages/
+        │   ├── Home.jsx                        # role picker landing page
+        │   ├── RecruiterDashboard.jsx            # job setup, upload, shortlist, results
+        │   └── StudentDashboard.jsx                # generate / critique tabs
+        └── components/
+            ├── MatchMeter.jsx                       # segmented match-score bar
+            └── ScoreRing.jsx                          # ATS score ring
+```
+
+---
+
+## What's Deliberately Simplified (Next Steps for Production)
+
+- **Auth** — no login/user model yet. Add recruiter/student accounts and scope jobs and generated resumes to a `user_id`.
+- **Migrations** — tables are created with `Base.metadata.create_all`; swap in Alembic once the schema stabilizes.
+- **File storage** — uploaded resume bytes aren't persisted to disk/S3, only the extracted text. Add blob storage to re-download originals.
+- **Background jobs** — shortlisting runs synchronously in the request; for large batches, move it to a task queue (Celery/RQ) and poll for status.
+- **Structured resume parsing** — contact extraction currently only captures name/email/phone via regex. This can be extended to have Gemini return structured fields (skills, years of experience, degrees) at upload time.
+
+---
+
+## License
+
+This project is open source and available for personal and educational use.
